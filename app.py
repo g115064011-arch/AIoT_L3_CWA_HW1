@@ -1,21 +1,23 @@
+import html
+import textwrap
+
 import folium
 import pandas as pd
 import streamlit as st
 from streamlit_folium import st_folium
 
-from database import get_all_records, init_db, insert_records
+from database import get_all_records, init_db, replace_current_forecast
 from weather_api import fetch_weather_forecast
 
 
-# ── Page configuration ──────────────────────────────────────────────────────
 st.set_page_config(
     page_title="台灣天氣預報",
     page_icon="🌤️",
     layout="wide",
+    initial_sidebar_state="collapsed",
 )
 
 
-# ── Styling ─────────────────────────────────────────────────────────────────
 st.markdown(
     """
     <style>
@@ -25,8 +27,8 @@ st.markdown(
 
     .block-container {
         max-width: 1500px;
-        padding-top: 1.8rem;
-        padding-bottom: 3rem;
+        padding-top: 1.15rem;
+        padding-bottom: 2.5rem;
     }
 
     h1, h2, h3 {
@@ -36,14 +38,21 @@ st.markdown(
     h1 {
         font-weight: 800;
         letter-spacing: -0.02em;
-        margin-bottom: 0.15rem;
+        margin-bottom: 0.1rem;
+    }
+
+    .hero-subtitle {
+        color: #66839A;
+        font-size: 0.96rem;
+        margin-top: -0.2rem;
+        margin-bottom: 0.9rem;
     }
 
     div[data-testid="stMetric"] {
         background: #FFFFFF;
         border: 1px solid #E3EDF5;
-        padding: 18px 20px;
-        border-radius: 18px;
+        padding: 15px 18px;
+        border-radius: 17px;
         box-shadow: 0 6px 18px rgba(34, 82, 120, 0.06);
     }
 
@@ -63,41 +72,91 @@ st.markdown(
         background: #FFFFFF;
     }
 
-    section[data-testid="stSidebar"] {
-        background: #EAF4FB;
-        border-right: 1px solid #DCEBF5;
-    }
-
-    div[data-testid="stDataFrame"] {
-        border-radius: 16px;
-        overflow: hidden;
-        border: 1px solid #E3EDF5;
-        background: #FFFFFF;
-    }
-
-    .section-card {
+    .tip-card {
         background: #FFFFFF;
         border: 1px solid #E3EDF5;
         border-radius: 18px;
-        padding: 1rem 1.1rem;
+        padding: 1rem 1.15rem;
         box-shadow: 0 6px 18px rgba(34, 82, 120, 0.05);
+        margin-top: 0.4rem;
         margin-bottom: 0.8rem;
     }
 
-    .hero-subtitle {
-        color: #66839A;
-        font-size: 0.98rem;
-        margin-top: -0.25rem;
-        margin-bottom: 1rem;
+    .tip-title {
+        color: #174A7E;
+        font-weight: 800;
+        font-size: 1.05rem;
+        margin-bottom: 0.45rem;
+    }
+
+    .tip-line {
+        color: #36566F;
+        line-height: 1.75;
     }
 
     .soft-note {
         background: #EAF5FD;
         border: 1px solid #D5EAF8;
-        border-radius: 14px;
-        padding: 0.7rem 0.9rem;
+        border-radius: 13px;
+        padding: 0.65rem 0.85rem;
         color: #315D7A;
-        margin: 0.4rem 0 0.9rem 0;
+        margin: 0.3rem 0 0.7rem 0;
+    }
+
+    .forecast-table-wrap {
+        background: #FFFFFF;
+        border: 1px solid #DCEAF4;
+        border-radius: 16px;
+        overflow: hidden;
+        box-shadow: 0 4px 14px rgba(34, 82, 120, 0.04);
+    }
+
+    .forecast-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.94rem;
+    }
+
+    .forecast-table th {
+        background: #EAF4FB;
+        color: #315D7A;
+        text-align: left;
+        padding: 0.8rem 0.9rem;
+        font-weight: 750;
+        border-bottom: 1px solid #DCEAF4;
+    }
+
+    .forecast-table td {
+        padding: 0.8rem 0.9rem;
+        color: #2E4F68;
+        border-bottom: 1px solid #EEF4F8;
+        vertical-align: middle;
+    }
+
+    .forecast-table tr:last-child td {
+        border-bottom: none;
+    }
+
+    .forecast-table tr:hover td {
+        background: #F8FCFF;
+    }
+
+    .weather-pill {
+        display: inline-block;
+        background: #EFF7FC;
+        color: #285C7D;
+        border-radius: 999px;
+        padding: 0.22rem 0.55rem;
+        font-weight: 650;
+    }
+
+    .rain-pill {
+        display: inline-block;
+        background: #EDF8F3;
+        color: #28745B;
+        border-radius: 999px;
+        padding: 0.22rem 0.55rem;
+        font-weight: 700;
     }
 
     .stButton > button {
@@ -110,33 +169,56 @@ st.markdown(
 )
 
 
-# ── Data helpers ─────────────────────────────────────────────────────────────
 @st.cache_data(show_spinner=False)
 def load_data_from_db():
     rows = get_all_records()
+
     if not rows:
         return pd.DataFrame()
 
-    df = pd.DataFrame([dict(r) for r in rows])
+    df = pd.DataFrame([dict(row) for row in rows])
 
-    df["MinT"] = pd.to_numeric(df["MinT"], errors="coerce")
-    df["MaxT"] = pd.to_numeric(df["MaxT"], errors="coerce")
-    df["startTime"] = pd.to_datetime(df["startTime"])
-    df["endTime"] = pd.to_datetime(df["endTime"])
+    for column in ["MinT", "MaxT", "PoP"]:
+        if column not in df.columns:
+            df[column] = pd.NA
+        df[column] = pd.to_numeric(df[column], errors="coerce")
+
+    if "CI" not in df.columns:
+        df["CI"] = ""
+
+    df["CI"] = df["CI"].fillna("").astype(str)
+    df.loc[df["CI"].str.lower() == "nan", "CI"] = ""
+
+    df["startTime"] = pd.to_datetime(df["startTime"], errors="coerce")
+    df["endTime"] = pd.to_datetime(df["endTime"], errors="coerce")
 
     return df
 
 
-def run_pipeline():
-    init_db()
+def refresh_forecast():
     records = fetch_weather_forecast()
-    if records:
-        return insert_records(records)
-    return 0
+
+    if not records:
+        return 0
+
+    count = replace_current_forecast(records)
+    load_data_from_db.clear()
+    return count
+
+
+def active_forecast_data(df):
+    if df.empty:
+        return df
+
+    now = pd.Timestamp.now()
+    active = df[df["endTime"] > now].copy()
+
+    return active if not active.empty else df.copy()
 
 
 def nearest_record(df_region, selected_time):
     exact = df_region[df_region["startTime"] == selected_time]
+
     if not exact.empty:
         return exact.iloc[0]
 
@@ -144,7 +226,76 @@ def nearest_record(df_region, selected_time):
     return df_region.loc[idx]
 
 
-# ── Coordinates for all 22 CWA counties / cities ─────────────────────────────
+def friendly_period_label(timestamp):
+    ts = pd.Timestamp(timestamp)
+    today = pd.Timestamp.now().normalize()
+    day_diff = (ts.normalize() - today).days
+
+    if day_diff == 0:
+        day = "今天"
+    elif day_diff == 1:
+        day = "明天"
+    elif day_diff == 2:
+        day = "後天"
+    else:
+        day = ts.strftime("%m/%d")
+
+    if ts.hour < 12:
+        part = "白天"
+    elif ts.hour < 18:
+        part = "下午"
+    else:
+        part = "晚上"
+
+    return f"{day}{part}"
+
+
+def weather_emoji(wx):
+    text = str(wx or "")
+
+    if "雷" in text:
+        return "⛈️"
+    if "雨" in text:
+        return "🌧️"
+    if "雪" in text:
+        return "🌨️"
+    if "陰" in text:
+        return "☁️"
+    if "多雲" in text or "雲" in text:
+        return "⛅"
+    if "晴" in text:
+        return "☀️"
+
+    return "🌤️"
+
+
+def build_tips(row):
+    tips = []
+
+    min_t = row.get("MinT")
+    max_t = row.get("MaxT")
+    pop = row.get("PoP")
+
+    if pd.notna(pop):
+        if pop >= 50:
+            tips.append("☂️ 降雨機率偏高，出門記得帶傘。")
+        elif pop >= 30:
+            tips.append("🌂 有下雨可能，帶把折傘會比較安心。")
+
+    if pd.notna(min_t) and pd.notna(max_t):
+        if max_t - min_t >= 8:
+            tips.append("🧥 早晚溫差較大，可以準備一件薄外套。")
+        if max_t >= 30:
+            tips.append("🧴 白天偏熱，注意防曬與補充水分。")
+        if min_t < 16:
+            tips.append("🧣 氣溫偏低，建議增加保暖衣物。")
+
+    if not tips:
+        tips.append("🌿 天氣條件相對平穩，依個人行程準備即可。")
+
+    return tips
+
+
 COORDINATES = {
     "臺北市": (25.0330, 121.5654),
     "新北市": (25.0120, 121.4657),
@@ -172,7 +323,6 @@ COORDINATES = {
 
 
 def build_map(df, selected_time):
-    # Avoid groupby().apply() compatibility issues by building rows explicitly.
     snapshot_rows = []
 
     for location_name, group in df.groupby("locationName"):
@@ -196,7 +346,7 @@ def build_map(df, selected_time):
     )
 
     def temp_color(max_t):
-        if max_t is None or pd.isna(max_t):
+        if pd.isna(max_t):
             return "gray"
         if max_t < 20:
             return "blue"
@@ -217,57 +367,51 @@ def build_map(df, selected_time):
 
         max_t = row["MaxT"]
         min_t = row["MinT"]
+        pop = row.get("PoP")
+        ci = str(row.get("CI") or "")
         wx = row["Wx"]
 
-        start = (
-            row["startTime"].strftime("%Y-%m-%d %H:%M")
-            if pd.notna(row["startTime"])
-            else "—"
-        )
-        end = (
-            row["endTime"].strftime("%Y-%m-%d %H:%M")
-            if pd.notna(row["endTime"])
-            else "—"
-        )
-
-        min_t_str = f"{min_t:.0f} °C" if pd.notna(min_t) else "N/A"
-        max_t_str = f"{max_t:.0f} °C" if pd.notna(max_t) else "N/A"
-        label_t = f"{max_t:.0f}°" if pd.notna(max_t) else "?"
-        color = temp_color(max_t)
+        min_t_str = f"{min_t:.0f}°C" if pd.notna(min_t) else "N/A"
+        max_t_str = f"{max_t:.0f}°C" if pd.notna(max_t) else "N/A"
+        pop_str = f"{pop:.0f}%" if pd.notna(pop) else "N/A"
+        temp_label = f"{max_t:.0f}°" if pd.notna(max_t) else "?"
 
         popup_html = f"""
-        <div style="font-family:sans-serif; min-width:170px;">
+        <div style="font-family:sans-serif; min-width:180px;">
             <b style="font-size:15px;">📍 {name}</b><br>
             <hr style="margin:5px 0;">
-            🌤️ {wx}<br>
-            🌡️ {min_t_str} — {max_t_str}<br>
-            🕒 {start}<br>
-            <span style="color:#7a7a7a;font-size:11px;">至 {end}</span>
+            {weather_emoji(wx)} {wx}<br>
+            🌡️ {min_t_str} – {max_t_str}<br>
+            ☔ 降雨機率 {pop_str}<br>
+            🙂 {ci if ci else 'N/A'}<br>
+            🕒 {row['startTime'].strftime('%m/%d %H:%M')}
         </div>
         """
 
+        color = temp_color(max_t)
+
         folium.CircleMarker(
             location=coords,
-            radius=18,
+            radius=12,
             color=color,
             weight=2,
             fill=True,
             fill_color=color,
-            fill_opacity=0.58,
+            fill_opacity=0.62,
             tooltip=f"{name}｜{wx}",
-            popup=folium.Popup(popup_html, max_width=260),
+            popup=folium.Popup(popup_html, max_width=270),
         ).add_to(taiwan_map)
 
         folium.Marker(
             location=coords,
             icon=folium.DivIcon(
                 html=(
-                    '<div style="font-size:9px;font-weight:700;color:#1F2D3D;'
-                    'text-align:center;line-height:1.2;margin-top:-4px;">'
-                    f"{name}<br>{label_t}</div>"
+                    '<div style="font-size:10px;font-weight:800;color:#1F2D3D;'
+                    'text-align:center;line-height:1;margin-top:-4px;">'
+                    f"{temp_label}</div>"
                 ),
-                icon_size=(60, 30),
-                icon_anchor=(30, 15),
+                icon_size=(42, 20),
+                icon_anchor=(21, 10),
             ),
         ).add_to(taiwan_map)
 
@@ -276,140 +420,291 @@ def build_map(df, selected_time):
     return taiwan_map, markers_added
 
 
-# ── Sidebar ──────────────────────────────────────────────────────────────────
-with st.sidebar:
-    st.markdown("## ⚙️ 控制面板")
-    st.caption("更新資料與查看資料來源")
+def render_pretty_table(df_region):
+    rows_html = []
 
-    refresh = st.button("🔄 從 CWA API 更新資料", use_container_width=True)
+    for _, row in df_region.iterrows():
+        label = friendly_period_label(row["startTime"])
+        wx = str(row["Wx"] or "")
+        icon = weather_emoji(wx)
 
-    if refresh:
-        with st.spinner("正在取得最新天氣預報..."):
-            inserted = run_pipeline()
-            load_data_from_db.clear()
+        min_t = (
+            f"{row['MinT']:.0f}"
+            if pd.notna(row["MinT"])
+            else "—"
+        )
+        max_t = (
+            f"{row['MaxT']:.0f}"
+            if pd.notna(row["MaxT"])
+            else "—"
+        )
+        pop = (
+            f"{row['PoP']:.0f}%"
+            if pd.notna(row["PoP"])
+            else "—"
+        )
+        ci = str(row.get("CI") or "").strip() or "—"
 
-        if inserted > 0:
-            st.success(f"已新增 {inserted} 筆資料。")
-        else:
-            st.info("目前資料已是最新狀態。")
+        rows_html.append(
+            f"""
+            <tr>
+                <td><b>{html.escape(label)}</b><br>
+                    <span style="color:#8298AA;font-size:0.82rem;">
+                    {row['startTime'].strftime('%m/%d %H:%M')}
+                    </span>
+                </td>
+                <td><span class="weather-pill">
+                    {icon} {html.escape(wx)}
+                    </span>
+                </td>
+                <td><b>{min_t}–{max_t}°C</b></td>
+                <td><span class="rain-pill">☔ {pop}</span></td>
+                <td>{html.escape(ci)}</td>
+            </tr>
+            """
+        )
 
-    st.divider()
-    st.markdown("### 📡 資料來源")
-    st.caption("中央氣象署 CWA Open Data API")
-    st.caption("資料集：F-C0032-001")
-    st.caption("36 小時縣市天氣預報")
+    table_html = f"""
+    <div class="forecast-table-wrap">
+        <table class="forecast-table">
+            <thead>
+                <tr>
+                    <th>預報時段</th>
+                    <th>天氣</th>
+                    <th>溫度</th>
+                    <th>降雨機率</th>
+                    <th>舒適度</th>
+                </tr>
+            </thead>
+            <tbody>
+                {''.join(rows_html)}
+            </tbody>
+        </table>
+    </div>
+    """
+
+    # Render as HTML directly instead of Markdown.
+    # This avoids Markdown treating indented <tr>/<td> tags as a code block.
+    st.html(textwrap.dedent(table_html).strip())
 
 
-# ── Main area ────────────────────────────────────────────────────────────────
-st.title("🌤️ 台灣天氣預報")
-st.markdown(
-    '<div class="hero-subtitle">CWA 36 小時天氣預報｜快速查看縣市天氣、溫度趨勢與全台互動地圖</div>',
-    unsafe_allow_html=True,
-)
-
+# ── Bootstrap ────────────────────────────────────────────────────────────────
 init_db()
 df_all = load_data_from_db()
 
 if df_all.empty:
-    st.info("目前資料庫沒有天氣資料，系統將自動從 CWA API 取得資料。")
-    with st.spinner("正在建立初始資料..."):
-        run_pipeline()
-        load_data_from_db.clear()
+    st.info("目前資料庫沒有天氣資料，正在從 CWA API 建立最新預報。")
+    with st.spinner("正在取得天氣資料..."):
+        refresh_forecast()
         df_all = load_data_from_db()
 
+
+# ── Header ───────────────────────────────────────────────────────────────────
+header_left, header_right = st.columns([5, 1])
+
+with header_left:
+    st.title("🌤️ 台灣天氣預報")
+    st.markdown(
+        '<div class="hero-subtitle">'
+        'CWA 36 小時預報｜快速決定今天要不要帶傘、外套與防曬用品'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+with header_right:
+    st.write("")
+    st.write("")
+    if st.button("🔄 更新資料", use_container_width=True):
+        with st.spinner("正在取得最新 CWA 天氣資料..."):
+            count = refresh_forecast()
+
+        st.success(f"已同步 {count} 筆最新預報。")
+        st.rerun()
+
+
 if not df_all.empty:
-    locations = sorted(df_all["locationName"].unique().tolist())
-    available_times = sorted(df_all["startTime"].unique().tolist())
-    time_labels = [
-        pd.Timestamp(t).strftime("%Y-%m-%d %H:%M")
-        for t in available_times
+    df_view = active_forecast_data(df_all)
+
+    locations = sorted(
+        df_view["locationName"].dropna().unique().tolist()
+    )
+    available_times = sorted(
+        df_view["startTime"].dropna().unique().tolist()
+    )
+
+    if not available_times:
+        st.error("找不到可用預報時段。")
+        st.stop()
+
+    period_labels = [
+        f"{friendly_period_label(ts)}｜{pd.Timestamp(ts).strftime('%m/%d %H:%M')}"
+        for ts in available_times
     ]
-    time_label_to_ts = dict(zip(time_labels, available_times))
+    label_to_time = dict(zip(period_labels, available_times))
 
-    # ── Top controls ─────────────────────────────────────────────────────────
-    select_col1, select_col2 = st.columns([1, 1])
+    now = pd.Timestamp.now()
+    default_index = 0
 
-    with select_col1:
+    for index, ts in enumerate(available_times):
+        matching = df_view[df_view["startTime"] == ts]
+        if matching.empty:
+            continue
+
+        end = matching["endTime"].max()
+
+        if ts <= now < end:
+            default_index = index
+            break
+
+    control_left, control_right = st.columns([1, 2])
+
+    with control_left:
         selected_location = st.selectbox(
             "📍 選擇縣市",
             options=locations,
-            index=0,
         )
 
-    with select_col2:
-        selected_label = st.selectbox(
+    with control_right:
+        selected_label = st.radio(
             "⏰ 選擇預報時段",
-            options=time_labels,
-            index=0,
-            key="map_time_selector",
-            help="選擇要顯示在全台地圖上的 12 小時預報時段。",
+            options=period_labels,
+            index=min(default_index, len(period_labels) - 1),
+            horizontal=True,
         )
 
-    selected_time = pd.Timestamp(time_label_to_ts[selected_label])
+    selected_time = pd.Timestamp(label_to_time[selected_label])
 
     df_region = (
-        df_all[df_all["locationName"] == selected_location]
+        df_view[df_view["locationName"] == selected_location]
         .sort_values("startTime")
         .reset_index(drop=True)
     )
 
-    selected_record = nearest_record(df_region, selected_time)
+    selected_record = nearest_record(
+        df_region,
+        selected_time,
+    )
 
-    # ── Summary cards ────────────────────────────────────────────────────────
-    card1, card2, card3, card4 = st.columns(4)
+    map_col, info_col = st.columns(
+        [1.45, 1],
+        gap="large",
+    )
 
-    with card1:
-        st.metric("📍 目前地區", selected_location)
-
-    with card2:
-        min_t = selected_record["MinT"]
-        max_t = selected_record["MaxT"]
-        temp_text = (
-            f"{min_t:.0f}–{max_t:.0f}°C"
-            if pd.notna(min_t) and pd.notna(max_t)
-            else "N/A"
+    with map_col:
+        st.subheader("🗺️ 全台天氣地圖")
+        st.caption(
+            "點擊標記查看詳細天氣。"
+            " 顏色依最高溫：🔵 <20°C　🟢 20–28°C　"
+            "🟠 28–33°C　🔴 ≥33°C"
         )
-        st.metric("🌡️ 溫度範圍", temp_text)
 
-    with card3:
-        st.metric("🌤️ 天氣", str(selected_record["Wx"]))
+        taiwan_map, marker_count = build_map(
+            df_view,
+            selected_time,
+        )
 
-    with card4:
-        period_label = selected_record["startTime"].strftime("%m/%d %H:%M")
-        st.metric("🕒 預報開始", period_label)
+        st_folium(
+            taiwan_map,
+            width="stretch",
+            height=490,
+            returned_objects=[],
+            key=f"folium_map_{selected_label}",
+        )
 
-    st.markdown(
-        f'<div class="soft-note">目前地圖顯示時段：<b>{selected_label}</b> ｜ '
-        f'共 {len(df_all["locationName"].unique())} 個縣市資料</div>',
-        unsafe_allow_html=True,
-    )
+        st.caption(f"目前顯示 {marker_count} 個縣市標記。")
 
-    # ── Main map ─────────────────────────────────────────────────────────────
-    st.subheader("🗺️ 全台天氣地圖")
-    st.caption(
-        "點擊縣市標記可查看天氣與溫度。"
-        " 顏色：🔵 <20°C　🟢 20–28°C　🟠 28–33°C　🔴 ≥33°C"
-    )
+    with info_col:
+        wx = str(selected_record.get("Wx") or "")
+        min_t = selected_record.get("MinT")
+        max_t = selected_record.get("MaxT")
+        pop = selected_record.get("PoP")
+        ci = str(selected_record.get("CI") or "").strip()
 
-    taiwan_map, num_markers = build_map(df_all, selected_time)
+        st.subheader(
+            f"📍 {selected_location}｜{weather_emoji(wx)} {wx}"
+        )
 
-    st_folium(
-        taiwan_map,
-        width="stretch",
-        height=610,
-        returned_objects=[],
-        key=f"folium_map_{selected_label}",
-    )
+        metric1, metric2 = st.columns(2)
 
-    st.caption(f"目前顯示 {num_markers} 個縣市標記。")
+        with metric1:
+            temperature = (
+                f"{min_t:.0f}–{max_t:.0f}°C"
+                if pd.notna(min_t) and pd.notna(max_t)
+                else "N/A"
+            )
+            st.metric("🌡️ 溫度", temperature)
 
-    # ── Lower dashboard: chart + table ──────────────────────────────────────
-    st.divider()
-    chart_col, table_col = st.columns([1, 1.15], gap="large")
+        with metric2:
+            rainfall = (
+                f"{pop:.0f}%"
+                if pd.notna(pop)
+                else "N/A"
+            )
+            st.metric("☔ 降雨機率", rainfall)
 
-    with chart_col:
-        st.subheader(f"📈 {selected_location} 溫度趨勢")
+        st.metric(
+            "🙂 舒適度",
+            ci if ci else "N/A",
+        )
 
+        tips = build_tips(selected_record)
+        tips_html = "".join(
+            f'<div class="tip-line">{tip}</div>'
+            for tip in tips
+        )
+
+        st.markdown(
+            f"""
+            <div class="tip-card">
+                <div class="tip-title">💡 出門小提醒</div>
+                {tips_html}
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        st.markdown(
+            f"""
+            <div class="soft-note">
+                預報時段：<b>{html.escape(selected_label)}</b><br>
+                資料來源：中央氣象署 CWA Open Data
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    # ── Three-period cards ──────────────────────────────────────────────────
+    st.subheader(f"🗓️ {selected_location} 36 小時預報")
+
+    columns = st.columns(len(df_region))
+
+    for column, (_, row) in zip(
+        columns,
+        df_region.iterrows(),
+    ):
+        with column:
+            icon = weather_emoji(row["Wx"])
+            temp_text = (
+                f"{row['MinT']:.0f}–{row['MaxT']:.0f}°C"
+                if pd.notna(row["MinT"])
+                and pd.notna(row["MaxT"])
+                else "N/A"
+            )
+            pop_text = (
+                f"{row['PoP']:.0f}%"
+                if pd.notna(row["PoP"])
+                else "N/A"
+            )
+
+            st.metric(
+                friendly_period_label(row["startTime"]),
+                f"{icon} {temp_text}",
+                f"☔ {pop_text}",
+            )
+            st.caption(str(row["Wx"]))
+
+    # ── Details ─────────────────────────────────────────────────────────────
+    with st.expander("📈 查看溫度趨勢", expanded=False):
         chart_df = df_region.set_index(
             df_region["startTime"].dt.strftime("%m/%d %H:%M")
         )[["MinT", "MaxT"]].rename(
@@ -421,35 +716,9 @@ if not df_all.empty:
 
         st.line_chart(chart_df, width="stretch")
 
-    with table_col:
-        st.subheader(f"📋 {selected_location} 詳細預報")
-
-        display_df = df_region[
-            ["startTime", "endTime", "Wx", "MinT", "MaxT"]
-        ].copy()
-
-        display_df["startTime"] = display_df["startTime"].dt.strftime(
-            "%Y-%m-%d %H:%M"
-        )
-        display_df["endTime"] = display_df["endTime"].dt.strftime(
-            "%Y-%m-%d %H:%M"
-        )
-
-        display_df.columns = [
-            "開始時間",
-            "結束時間",
-            "天氣",
-            "最低溫 (°C)",
-            "最高溫 (°C)",
-        ]
-
-        st.dataframe(
-            display_df,
-            width="stretch",
-            hide_index=True,
-        )
+    with st.expander("📋 查看詳細預報資料", expanded=False):
+        render_pretty_table(df_region)
 
     st.caption(
-        f"資料庫目前共有 {len(df_all)} 筆預報資料；"
-        f"{selected_location} 共有 {len(df_region)} 個預報時段。"
+        f"目前資料庫共有 {len(df_all)} 筆最新預報紀錄。"
     )
