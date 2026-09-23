@@ -6,56 +6,145 @@ from streamlit_folium import st_folium
 from database import get_all_records, init_db, insert_records
 from weather_api import fetch_weather_forecast
 
+
 # ── Page configuration ──────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="Taiwan Weather Forecast",
+    page_title="台灣天氣預報",
     page_icon="🌤️",
     layout="wide",
 )
 
 
-# ── Data helpers ─────────────────────────────────────────────────────────────
+# ── Styling ─────────────────────────────────────────────────────────────────
+st.markdown(
+    """
+    <style>
+    .stApp {
+        background: #F4F9FD;
+    }
 
+    .block-container {
+        max-width: 1500px;
+        padding-top: 1.8rem;
+        padding-bottom: 3rem;
+    }
+
+    h1, h2, h3 {
+        color: #174A7E;
+    }
+
+    h1 {
+        font-weight: 800;
+        letter-spacing: -0.02em;
+        margin-bottom: 0.15rem;
+    }
+
+    div[data-testid="stMetric"] {
+        background: #FFFFFF;
+        border: 1px solid #E3EDF5;
+        padding: 18px 20px;
+        border-radius: 18px;
+        box-shadow: 0 6px 18px rgba(34, 82, 120, 0.06);
+    }
+
+    div[data-testid="stMetricLabel"] {
+        color: #57748E;
+        font-weight: 600;
+    }
+
+    div[data-testid="stMetricValue"] {
+        color: #173F63;
+        font-weight: 800;
+    }
+
+    div[data-baseweb="select"] > div {
+        border-radius: 12px;
+        border-color: #D9E8F3;
+        background: #FFFFFF;
+    }
+
+    section[data-testid="stSidebar"] {
+        background: #EAF4FB;
+        border-right: 1px solid #DCEBF5;
+    }
+
+    div[data-testid="stDataFrame"] {
+        border-radius: 16px;
+        overflow: hidden;
+        border: 1px solid #E3EDF5;
+        background: #FFFFFF;
+    }
+
+    .section-card {
+        background: #FFFFFF;
+        border: 1px solid #E3EDF5;
+        border-radius: 18px;
+        padding: 1rem 1.1rem;
+        box-shadow: 0 6px 18px rgba(34, 82, 120, 0.05);
+        margin-bottom: 0.8rem;
+    }
+
+    .hero-subtitle {
+        color: #66839A;
+        font-size: 0.98rem;
+        margin-top: -0.25rem;
+        margin-bottom: 1rem;
+    }
+
+    .soft-note {
+        background: #EAF5FD;
+        border: 1px solid #D5EAF8;
+        border-radius: 14px;
+        padding: 0.7rem 0.9rem;
+        color: #315D7A;
+        margin: 0.4rem 0 0.9rem 0;
+    }
+
+    .stButton > button {
+        border-radius: 12px;
+        font-weight: 700;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+
+# ── Data helpers ─────────────────────────────────────────────────────────────
 @st.cache_data(show_spinner=False)
 def load_data_from_db():
-    """
-    Load all forecast records from SQLite and return as a pandas DataFrame.
-    Result is cached so the DB is not queried on every Streamlit re-run.
-    """
     rows = get_all_records()
     if not rows:
         return pd.DataFrame()
 
     df = pd.DataFrame([dict(r) for r in rows])
 
-    # Convert temperature columns to numeric (they are stored as REAL but
-    # come back as float already; this guard handles any edge cases).
     df["MinT"] = pd.to_numeric(df["MinT"], errors="coerce")
     df["MaxT"] = pd.to_numeric(df["MaxT"], errors="coerce")
-
-    # Parse startTime as datetime for sorting / charting
     df["startTime"] = pd.to_datetime(df["startTime"])
-    df["endTime"]   = pd.to_datetime(df["endTime"])
+    df["endTime"] = pd.to_datetime(df["endTime"])
 
     return df
 
 
 def run_pipeline():
-    """
-    Full data pipeline: initialise DB → fetch CWA API → insert records.
-    Returns the number of newly inserted rows.
-    """
     init_db()
     records = fetch_weather_forecast()
     if records:
-        inserted = insert_records(records)
-        return inserted
+        return insert_records(records)
     return 0
 
 
+def nearest_record(df_region, selected_time):
+    exact = df_region[df_region["startTime"] == selected_time]
+    if not exact.empty:
+        return exact.iloc[0]
+
+    idx = (df_region["startTime"] - selected_time).abs().idxmin()
+    return df_region.loc[idx]
+
+
 # ── Coordinates for all 22 CWA counties / cities ─────────────────────────────
-# Latitude / longitude for the geographic centre of each county or city.
-# These are fixed reference points and do not change with forecast data.
 COORDINATES = {
     "臺北市": (25.0330, 121.5654),
     "新北市": (25.0120, 121.4657),
@@ -83,28 +172,7 @@ COORDINATES = {
 
 
 def build_map(df, selected_time):
-    """
-    Build a Folium map of Taiwan with one CircleMarker per county/city.
-
-    For each location the record matching `selected_time` is used.
-    If a location has no record for that exact startTime, the nearest
-    available time is used instead (graceful fallback, never crashes).
-
-    Markers are colour-coded by MaxT:
-        < 20 °C  → blue
-        20–28 °C → green
-        28–33 °C → orange
-        >= 33 °C → red
-
-    Args:
-        df (pd.DataFrame): Full forecast DataFrame from load_data_from_db().
-        selected_time (pd.Timestamp): The forecast startTime chosen by the user.
-
-    Returns:
-        tuple[folium.Map, int]: The map and the number of markers added.
-    """
-        # For each location, select the record matching the selected forecast time.
-    # If there is no exact match, use the closest available forecast time.
+    # Avoid groupby().apply() compatibility issues by building rows explicitly.
     snapshot_rows = []
 
     for location_name, group in df.groupby("locationName"):
@@ -116,13 +184,11 @@ def build_map(df, selected_time):
             idx = (group["startTime"] - selected_time).abs().idxmin()
             row = group.loc[idx].copy()
 
-        # Make sure locationName is preserved
         row["locationName"] = location_name
         snapshot_rows.append(row)
 
     snapshot = pd.DataFrame(snapshot_rows)
 
-    # Taiwan centre, zoom level 8 shows the whole island comfortably
     taiwan_map = folium.Map(
         location=[23.8, 121.0],
         zoom_start=8,
@@ -130,7 +196,7 @@ def build_map(df, selected_time):
     )
 
     def temp_color(max_t):
-        if max_t is None:
+        if max_t is None or pd.isna(max_t):
             return "gray"
         if max_t < 20:
             return "blue"
@@ -141,38 +207,42 @@ def build_map(df, selected_time):
         return "red"
 
     markers_added = 0
-    for _, row in snapshot.iterrows():
-        name   = row["locationName"]
-        coords = COORDINATES.get(name)
-        if coords is None:
-            continue   # skip any location without known coordinates
 
-        max_t  = row["MaxT"]
-        min_t  = row["MinT"]
-        wx     = row["Wx"]
-        start  = (
+    for _, row in snapshot.iterrows():
+        name = row["locationName"]
+        coords = COORDINATES.get(name)
+
+        if coords is None:
+            continue
+
+        max_t = row["MaxT"]
+        min_t = row["MinT"]
+        wx = row["Wx"]
+
+        start = (
             row["startTime"].strftime("%Y-%m-%d %H:%M")
-            if pd.notna(row["startTime"]) else "—"
+            if pd.notna(row["startTime"])
+            else "—"
         )
         end = (
             row["endTime"].strftime("%Y-%m-%d %H:%M")
-            if pd.notna(row["endTime"]) else "—"
+            if pd.notna(row["endTime"])
+            else "—"
         )
 
-        # Guard against NaN temperatures (show "N/A" gracefully)
         min_t_str = f"{min_t:.0f} °C" if pd.notna(min_t) else "N/A"
         max_t_str = f"{max_t:.0f} °C" if pd.notna(max_t) else "N/A"
-        label_t   = f"{max_t:.0f}°" if pd.notna(max_t) else "?"
-        color     = temp_color(max_t if pd.notna(max_t) else None)
+        label_t = f"{max_t:.0f}°" if pd.notna(max_t) else "?"
+        color = temp_color(max_t)
 
         popup_html = f"""
-        <div style="font-family:sans-serif; min-width:150px;">
-            <b style="font-size:14px;">{name}</b><br>
-            <hr style="margin:4px 0;">
-            🌤 {wx}<br>
-            🌡 {min_t_str} — {max_t_str}<br>
-            🕐 {start}<br>
-            <span style="color:#888;font-size:11px;">until {end}</span>
+        <div style="font-family:sans-serif; min-width:170px;">
+            <b style="font-size:15px;">📍 {name}</b><br>
+            <hr style="margin:5px 0;">
+            🌤️ {wx}<br>
+            🌡️ {min_t_str} — {max_t_str}<br>
+            🕒 {start}<br>
+            <span style="color:#7a7a7a;font-size:11px;">至 {end}</span>
         </div>
         """
 
@@ -180,20 +250,22 @@ def build_map(df, selected_time):
             location=coords,
             radius=18,
             color=color,
+            weight=2,
             fill=True,
             fill_color=color,
-            fill_opacity=0.55,
-            tooltip=name,
-            popup=folium.Popup(popup_html, max_width=240),
+            fill_opacity=0.58,
+            tooltip=f"{name}｜{wx}",
+            popup=folium.Popup(popup_html, max_width=260),
         ).add_to(taiwan_map)
 
-        # Add a text label inside the circle
         folium.Marker(
             location=coords,
             icon=folium.DivIcon(
-                html=f'<div style="font-size:9px;font-weight:bold;color:#222;'
-                     f'text-align:center;line-height:1.2;margin-top:-4px;">'
-                     f'{name}<br>{label_t}</div>',
+                html=(
+                    '<div style="font-size:9px;font-weight:700;color:#1F2D3D;'
+                    'text-align:center;line-height:1.2;margin-top:-4px;">'
+                    f"{name}<br>{label_t}</div>"
+                ),
                 icon_size=(60, 30),
                 icon_anchor=(30, 15),
             ),
@@ -205,117 +277,118 @@ def build_map(df, selected_time):
 
 
 # ── Sidebar ──────────────────────────────────────────────────────────────────
-
 with st.sidebar:
-    st.header("Controls")
+    st.markdown("## ⚙️ 控制面板")
+    st.caption("更新資料與查看資料來源")
 
-    refresh = st.button("Refresh data from CWA API", use_container_width=True)
+    refresh = st.button("🔄 從 CWA API 更新資料", use_container_width=True)
+
     if refresh:
-        with st.spinner("Fetching latest forecast from CWA API..."):
+        with st.spinner("正在取得最新天氣預報..."):
             inserted = run_pipeline()
-            load_data_from_db.clear()   # invalidate cache after new insert
+            load_data_from_db.clear()
+
         if inserted > 0:
-            st.success(f"Inserted {inserted} new records.")
+            st.success(f"已新增 {inserted} 筆資料。")
         else:
-            st.info("Data is already up to date. No new records inserted.")
+            st.info("目前資料已是最新狀態。")
 
     st.divider()
-    st.caption("Data source: CWA Open Data API  \nEndpoint: F-C0032-001")
+    st.markdown("### 📡 資料來源")
+    st.caption("中央氣象署 CWA Open Data API")
+    st.caption("資料集：F-C0032-001")
+    st.caption("36 小時縣市天氣預報")
 
 
-# ── Main area ─────────────────────────────────────────────────────────────────
+# ── Main area ────────────────────────────────────────────────────────────────
+st.title("🌤️ 台灣天氣預報")
+st.markdown(
+    '<div class="hero-subtitle">CWA 36 小時天氣預報｜快速查看縣市天氣、溫度趨勢與全台互動地圖</div>',
+    unsafe_allow_html=True,
+)
 
-st.title("🌤️ Taiwan Weather Forecast")
-st.caption("36-hour forecast for all Taiwan counties and cities — sourced from CWA Open Data")
-
-# ── Bootstrap: make sure DB exists and has data ───────────────────────────────
 init_db()
 df_all = load_data_from_db()
 
 if df_all.empty:
-    st.info("No forecast data found in the database. Click **Refresh data from CWA API** in the sidebar to fetch data.")
-    with st.spinner("Auto-fetching initial data..."):
+    st.info("目前資料庫沒有天氣資料，系統將自動從 CWA API 取得資料。")
+    with st.spinner("正在建立初始資料..."):
         run_pipeline()
         load_data_from_db.clear()
         df_all = load_data_from_db()
 
-# ── Region selector ───────────────────────────────────────────────────────────
 if not df_all.empty:
     locations = sorted(df_all["locationName"].unique().tolist())
+    available_times = sorted(df_all["startTime"].unique().tolist())
+    time_labels = [
+        pd.Timestamp(t).strftime("%Y-%m-%d %H:%M")
+        for t in available_times
+    ]
+    time_label_to_ts = dict(zip(time_labels, available_times))
 
-    selected_location = st.selectbox(
-        label="Select a region (縣市):",
-        options=locations,
-        index=0,
-    )
+    # ── Top controls ─────────────────────────────────────────────────────────
+    select_col1, select_col2 = st.columns([1, 1])
 
-    # Filter to selected region, sorted by startTime
+    with select_col1:
+        selected_location = st.selectbox(
+            "📍 選擇縣市",
+            options=locations,
+            index=0,
+        )
+
+    with select_col2:
+        selected_label = st.selectbox(
+            "⏰ 選擇預報時段",
+            options=time_labels,
+            index=0,
+            key="map_time_selector",
+            help="選擇要顯示在全台地圖上的 12 小時預報時段。",
+        )
+
+    selected_time = pd.Timestamp(time_label_to_ts[selected_label])
+
     df_region = (
         df_all[df_all["locationName"] == selected_location]
         .sort_values("startTime")
         .reset_index(drop=True)
     )
 
-    st.divider()
+    selected_record = nearest_record(df_region, selected_time)
 
-    # ── Forecast table ────────────────────────────────────────────────────────
-    st.subheader(f"Forecast table — {selected_location}")
+    # ── Summary cards ────────────────────────────────────────────────────────
+    card1, card2, card3, card4 = st.columns(4)
 
-    display_df = df_region[["locationName", "startTime", "endTime", "Wx", "MinT", "MaxT"]].copy()
-    display_df["startTime"] = display_df["startTime"].dt.strftime("%Y-%m-%d %H:%M")
-    display_df["endTime"]   = display_df["endTime"].dt.strftime("%Y-%m-%d %H:%M")
-    display_df.columns      = ["Location", "Start Time", "End Time", "Weather", "Min Temp (°C)", "Max Temp (°C)"]
+    with card1:
+        st.metric("📍 目前地區", selected_location)
 
-    st.dataframe(display_df, width="stretch", hide_index=True)
+    with card2:
+        min_t = selected_record["MinT"]
+        max_t = selected_record["MaxT"]
+        temp_text = (
+            f"{min_t:.0f}–{max_t:.0f}°C"
+            if pd.notna(min_t) and pd.notna(max_t)
+            else "N/A"
+        )
+        st.metric("🌡️ 溫度範圍", temp_text)
 
-    st.divider()
+    with card3:
+        st.metric("🌤️ 天氣", str(selected_record["Wx"]))
 
-    # ── Temperature line chart ────────────────────────────────────────────────
-    st.subheader(f"Temperature trend — {selected_location}")
+    with card4:
+        period_label = selected_record["startTime"].strftime("%m/%d %H:%M")
+        st.metric("🕒 預報開始", period_label)
 
-    # Build chart DataFrame: index = startTime label, columns = MinT / MaxT
-    chart_df = df_region.set_index(
-        df_region["startTime"].dt.strftime("%m/%d %H:%M")
-    )[["MinT", "MaxT"]].rename(columns={"MinT": "Min Temp (°C)", "MaxT": "Max Temp (°C)"})
+    st.markdown(
+        f'<div class="soft-note">目前地圖顯示時段：<b>{selected_label}</b> ｜ '
+        f'共 {len(df_all["locationName"].unique())} 個縣市資料</div>',
+        unsafe_allow_html=True,
+    )
 
-    st.line_chart(chart_df, width="stretch")
-
+    # ── Main map ─────────────────────────────────────────────────────────────
+    st.subheader("🗺️ 全台天氣地圖")
     st.caption(
-        f"Showing {len(df_region)} forecast period(s) for {selected_location}. "
-        f"Total records in database: {len(df_all)}."
-    )
-
-    # ── Taiwan weather map ────────────────────────────────────────────────────
-    st.divider()
-    st.subheader("Taiwan Weather Map")
-
-    # Build the list of distinct forecast startTimes available in the database.
-    # Sorted ascending so the earliest period is the default (index 0).
-    available_times = sorted(df_all["startTime"].unique().tolist())
-
-    # Format them as human-readable strings for the dropdown label.
-    time_labels = [
-        pd.Timestamp(t).strftime("%Y-%m-%d %H:%M") for t in available_times
-    ]
-    time_label_to_ts = dict(zip(time_labels, available_times))
-
-    selected_label = st.selectbox(
-        label="Select forecast period for map:",
-        options=time_labels,
-        index=0,
-        key="map_time_selector",
-        help="Choose which 12-hour forecast window to display on the map.",
-    )
-    selected_time = pd.Timestamp(time_label_to_ts[selected_label])
-
-    st.info(
-        f"Map showing forecast period: **{selected_label}** "
-        f"— {selected_time.strftime('%A, %B %d %Y')}  "
-        f"{'(Morning)' if selected_time.hour < 12 else '(Evening/Night)' if selected_time.hour >= 18 else '(Afternoon)'}"
-    )
-    st.caption(
-        "Each circle shows the forecast for that county/city in the selected period. "
-        "Click a marker to see details. Colour: 🔵 <20°C  🟢 20-28°C  🟠 28-33°C  🔴 ≥33°C"
+        "點擊縣市標記可查看天氣與溫度。"
+        " 顏色：🔵 <20°C　🟢 20–28°C　🟠 28–33°C　🔴 ≥33°C"
     )
 
     taiwan_map, num_markers = build_map(df_all, selected_time)
@@ -323,9 +396,60 @@ if not df_all.empty:
     st_folium(
         taiwan_map,
         width="stretch",
-        height=560,
-        returned_objects=[],   # we don't need click callbacks
-        key=f"folium_map_{selected_label}",  # force re-render when time changes
+        height=610,
+        returned_objects=[],
+        key=f"folium_map_{selected_label}",
     )
 
-    st.caption(f"Map shows {num_markers} location marker(s) for period starting {selected_label}.")
+    st.caption(f"目前顯示 {num_markers} 個縣市標記。")
+
+    # ── Lower dashboard: chart + table ──────────────────────────────────────
+    st.divider()
+    chart_col, table_col = st.columns([1, 1.15], gap="large")
+
+    with chart_col:
+        st.subheader(f"📈 {selected_location} 溫度趨勢")
+
+        chart_df = df_region.set_index(
+            df_region["startTime"].dt.strftime("%m/%d %H:%M")
+        )[["MinT", "MaxT"]].rename(
+            columns={
+                "MinT": "最低溫 (°C)",
+                "MaxT": "最高溫 (°C)",
+            }
+        )
+
+        st.line_chart(chart_df, width="stretch")
+
+    with table_col:
+        st.subheader(f"📋 {selected_location} 詳細預報")
+
+        display_df = df_region[
+            ["startTime", "endTime", "Wx", "MinT", "MaxT"]
+        ].copy()
+
+        display_df["startTime"] = display_df["startTime"].dt.strftime(
+            "%Y-%m-%d %H:%M"
+        )
+        display_df["endTime"] = display_df["endTime"].dt.strftime(
+            "%Y-%m-%d %H:%M"
+        )
+
+        display_df.columns = [
+            "開始時間",
+            "結束時間",
+            "天氣",
+            "最低溫 (°C)",
+            "最高溫 (°C)",
+        ]
+
+        st.dataframe(
+            display_df,
+            width="stretch",
+            hide_index=True,
+        )
+
+    st.caption(
+        f"資料庫目前共有 {len(df_all)} 筆預報資料；"
+        f"{selected_location} 共有 {len(df_region)} 個預報時段。"
+    )
