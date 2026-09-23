@@ -1,70 +1,109 @@
 # 台灣天氣預報 Web App
 
+# 🌤️ AIoT_L3_CWA_HW1
+
 ## 專案目的
 
 串接中央氣象署（CWA）開放資料平台 API，取得台灣各縣市天氣預報資料，並透過 Streamlit 建立互動式網頁儀表板，搭配地圖視覺化呈現天氣資訊。
 
-> 🚧 本專案目前為初始架構階段，功能持續開發中。
+> 用 Python × CWA API × SQLite × Streamlit  
+> 打造一個可以查天氣、看溫度趨勢、瀏覽台灣天氣地圖的小型 Web App ☀️🌧️🗺️
 
 ---
 
-## 使用技術
+## ✨ 專案介紹
 
-| 技術 | 用途 |
-|------|------|
-| Python | 主要程式語言 |
-| Requests | 呼叫 CWA Open Data API |
-| pandas | 資料處理與分析 |
-| SQLite | 本地資料儲存 |
-| Streamlit | 網頁介面與儀表板 |
-| Folium + streamlit-folium | 地圖視覺化 |
-| python-dotenv | 管理環境變數（API 金鑰） |
+本專案使用中央氣象署（CWA）開放資料 API 取得台灣天氣預報資料，  
+透過 Python 解析 JSON，並將資料儲存至 SQLite 資料庫中。
+
+最後再利用 Streamlit 建立互動式網頁介面，讓使用者可以：
+
+- 選擇不同縣市
+- 查看天氣預報資料
+- 比較最高溫與最低溫
+- 查看溫度趨勢折線圖
+- 使用互動式台灣地圖瀏覽各地天氣資訊
 
 ---
 
-## 專案檔案結構
+## 🌈 主要功能
 
-```
+目前已完成：
+
+- ☁️ 從 CWA Open Data API 取得天氣資料
+- 📦 解析 JSON 格式資料
+- 🏙️ 取得台灣 22 縣市天氣資訊
+- 🌡️ 擷取 MinT / MaxT
+- 🌤️ 擷取天氣現象 Wx
+- 🕒 擷取預報開始與結束時間
+- 🗃️ 使用 SQLite 儲存資料
+- 🚫 避免重複資料寫入
+- 💻 使用 Streamlit 建立 Web App
+- 🔽 縣市下拉選單
+- 📋 天氣預報資料表
+- 📈 最低溫 / 最高溫趨勢圖
+- 🗺️ Folium 台灣互動式天氣地圖
+- ⏰ 可選擇不同預報時段
+- 🔄 可重新從 CWA API 更新資料
+
+---
+
+## 🔄 Workflow
+
+本專案的資料處理流程如下：
+
+```text
+CWA Open Data API
+        ↓
+取得 JSON 天氣資料
+        ↓
+weather_api.py
+解析 locationName / Wx / MinT / MaxT / startTime / endTime
+        ↓
+database.py
+將整理後的資料寫入 SQLite
+        ↓
+SQL 查詢天氣資料
+        ↓
+app.py
+使用 Streamlit 建立 Web App
+        ↓
+顯示：
+📋 天氣預報表格
+📈 MinT / MaxT 溫度趨勢圖
+🗺️ 台灣互動式天氣地圖
+⏰ 預報時段選擇
+
+## 🛠️ 使用技術
+
+- Python
+- CWA Open Data API
+- JSON
+- Requests
+- pandas
+- SQLite
+- SQL
+- Streamlit
+- Folium
+- streamlit-folium
+- python-dotenv
+- Git
+- GitHub
+
+---
+
+## 📁 專案結構
+
+```text
 AIoT_L3_CWA_HW1/
-├── app.py            # 應用程式入口點
-├── weather_api.py    # CWA API 資料擷取模組（待實作）
-├── database.py       # SQLite 資料庫操作模組（待實作）
-├── requirements.txt  # Python 套件需求清單
-├── .env              # 環境變數（API 金鑰，不納入版本控制）
-├── .gitignore        # Git 忽略規則
-├── README.md         # 專案說明文件
-└── data/             # SQLite 資料庫存放目錄
-```
-
----
-
-## 安裝方式
-
-1. 複製此專案：
-   ```bash
-   git clone <your-repo-url>
-   cd AIoT_L3_CWA_HW1
-   ```
-
-2. 安裝所需套件：
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-3. 在 `.env` 檔案中填入你的 CWA API 金鑰：
-   ```
-   CWA_API_KEY=你的金鑰
-   ```
-
----
-
-## 執行方式
-
-```bash
-python app.py
-```
-
-預期輸出：
-```
-Taiwan Weather Forecast
-```
+│
+├── app.py
+├── weather_api.py
+├── database.py
+├── requirements.txt
+├── .gitignore
+├── .env
+├── README.md
+│
+└── data/
+    └── weather.db
